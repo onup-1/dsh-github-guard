@@ -20,8 +20,9 @@ runs as the logged-on user. So the work is split:
 The helper only listens on `127.0.0.1:8898` and only accepts requests carrying the token in
 `C:\ProgramData\DSHGuard\token.txt`, so an unprivileged process cannot repoint GitHub.
 
-The TLS probing lives in Node on purpose: on some Windows setups Schannel cannot complete
-any handshake (`SEC_E_NO_CREDENTIALS`), while OpenSSL inside the DSH runtime can.
+The TLS probing lives in Node on purpose: DSH's Windows sandbox lowers every sandboxed
+child process to Low integrity, and Schannel cannot create client credentials at that level
+(`SEC_E_NO_CREDENTIALS`), while OpenSSL inside the DSH runtime is unaffected.
 
 ## Install
 
