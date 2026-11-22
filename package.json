@@ -2,6 +2,25 @@
   "name": "dsh-github-guard",
   "version": "0.1.0",
   "description": "Keeps github.com reachable from DSH: watches GitHub traffic, probes the rotating edge IPs, and asks a tiny SYSTEM helper to rewrite the hosts pins.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "github",
+    "hosts",
+    "dns",
+    "connectivity",
+    "network"
+  ],
+  "author": "onup-1",
+  "homepage": "https://github.com/onup-1/dsh-github-guard#readme",
+  "bugs": {
+    "url": "https://github.com/onup-1/dsh-github-guard/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onup-1/dsh-github-guard.git"
+  },
   "type": "module",
   "main": "./index.mjs",
   "exports": {
