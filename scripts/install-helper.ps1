@@ -21,6 +21,22 @@ function Say($text) {
 
 [IO.Directory]::CreateDirectory($guardDir) | Out-Null
 
+# Stop the running helper first: its executable is locked while the SYSTEM task holds it.
+foreach ($stale in @($taskName, 'DSH-GitHubGuard')) {
+    $existing = Get-ScheduledTask -TaskName $stale -ErrorAction SilentlyContinue
+    if ($existing -ne $null) {
+        Stop-ScheduledTask -TaskName $stale -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $stale -Confirm:$false -ErrorAction SilentlyContinue
+        Say "removed previous task $stale"
+    }
+}
+foreach ($processName in @('dsh-github-guard', 'ghguard')) {
+    Get-Process $processName -ErrorAction SilentlyContinue | ForEach-Object {
+        try { $_.Kill(); $_.WaitForExit(5000); Say "killed stale $processName pid=$($_.Id)" } catch { }
+    }
+}
+Start-Sleep -Milliseconds 500
+
 if (-not (Test-Path $sourceExe)) { throw "helper executable not found: $sourceExe" }
 Copy-Item -LiteralPath $sourceExe -Destination $targetExe -Force
 Say "copied helper -> $targetExe"
@@ -34,20 +50,6 @@ if (-not (Test-Path $tokenFile)) {
     Say 'generated a new helper token'
 } else {
     Say 'kept the existing helper token'
-}
-
-foreach ($stale in @($taskName, 'DSH-GitHubGuard')) {
-    $existing = Get-ScheduledTask -TaskName $stale -ErrorAction SilentlyContinue
-    if ($existing -ne $null) {
-        Stop-ScheduledTask -TaskName $stale -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName $stale -Confirm:$false -ErrorAction SilentlyContinue
-        Say "removed previous task $stale"
-    }
-}
-foreach ($processName in @('dsh-github-guard', 'ghguard')) {
-    Get-Process $processName -ErrorAction SilentlyContinue | ForEach-Object {
-        try { $_.Kill(); Say "killed stale $processName pid=$($_.Id)" } catch { }
-    }
 }
 
 $action = New-ScheduledTaskAction -Execute $targetExe -Argument 'serve'

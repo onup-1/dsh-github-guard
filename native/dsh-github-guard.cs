@@ -23,6 +23,8 @@ static class GitHubGuardNative
 {
     const string PipeName = "dsh-github-guard";
     const string MarkerLine = "# dsh-github-guard: pinned edge";
+    // Left behind by the earlier PowerShell-only guard; dropped on the next rewrite.
+    const string LegacyMarkerLine = "# dsh-message-edit: pinned GitHub edge";
     const string HostsPath = @"C:\Windows\System32\drivers\etc\hosts";
     const string LogPath = @"C:\ProgramData\DSHGuard\dsh-github-guard.log";
 
@@ -333,6 +335,7 @@ static class GitHubGuardNative
             {
                 string trimmed = raw.Trim();
                 if (trimmed.StartsWith(MarkerLine, StringComparison.Ordinal)) continue;
+                if (trimmed.StartsWith(LegacyMarkerLine, StringComparison.Ordinal)) continue;
                 string[] parts = trimmed.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length >= 2 && PinnedHosts.Contains(parts[1].ToLowerInvariant())) continue;
                 kept.Add(raw);
