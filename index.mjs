@@ -57,7 +57,10 @@ function bundledExe() {
 }
 
 function detectorExe() {
-  return fs.existsSync(HELPER_EXE) ? HELPER_EXE : bundledExe()
+  // Prefer the copy shipped with the plugin: it is the one that can be updated without an
+  // elevated install, and it is what the repository ships anyway.
+  const bundled = bundledExe()
+  return fs.existsSync(bundled) ? bundled : HELPER_EXE
 }
 
 // ---------------------------------------------------------------- monitoring
@@ -71,6 +74,9 @@ function createState() {
     lastEventIp: null,
     lastProbeAt: null,
     lastProbeMs: null,
+    lastProbeBytes: null,
+    probeBytes: 0,
+    probes: 0,
     lastPin: null,
     lastError: null,
     runs: 0,
@@ -91,9 +97,10 @@ function tcpLatency(ip, timeoutMs) {
     const started = Date.now()
     const socket = net.connect({ host: ip, port: 443 })
     const finish = (value) => {
+      const bytes = socket.bytesRead + socket.bytesWritten
       socket.removeAllListeners()
       socket.destroy()
-      resolve(value)
+      resolve(value === null ? null : { ms: value, bytes })
     }
     socket.setTimeout(timeoutMs, () => finish(null))
     socket.on('connect', () => finish(Date.now() - started))
@@ -112,9 +119,10 @@ function tlsLatency(ip, timeoutMs) {
     )
     let head = ''
     const finish = (value) => {
+      const bytes = socket.bytesRead + socket.bytesWritten
       socket.removeAllListeners()
       socket.destroy()
-      resolve(value)
+      resolve(value === null ? null : { ms: value, bytes })
     }
     socket.setTimeout(timeoutMs, () => finish(null))
     socket.on('data', (chunk) => {
@@ -143,23 +151,26 @@ async function mapLimit(items, limit, worker) {
 async function bestEdge() {
   const started = Date.now()
   const latencies = await mapLimit(CANDIDATES, TCP_CONCURRENCY, (ip) => tcpLatency(ip, TCP_TIMEOUT_MS))
-  const reachable = CANDIDATES.map((ip, index) => ({ ip, ms: latencies[index] }))
+  const tcpBytes = latencies.reduce((sum, entry) => sum + (entry === null ? 0 : entry.bytes), 0)
+  const reachable = CANDIDATES.map((ip, index) => ({ ip, ms: latencies[index]?.ms }))
     .filter((entry) => typeof entry.ms === 'number')
     .sort((left, right) => left.ms - right.ms)
     .slice(0, TLS_CANDIDATES)
   if (reachable.length === 0) {
-    return { endpoint: null, elapsed: Date.now() - started, tcp: 0, tls: 0, detail: 'no candidate answered on 443' }
+    return { endpoint: null, elapsed: Date.now() - started, tcp: 0, tls: 0, bytes: tcpBytes, detail: 'no candidate answered on 443' }
   }
   const verified = await mapLimit(reachable, 4, async (entry) => {
-    const ms = await tlsLatency(entry.ip, TLS_TIMEOUT_MS)
-    return ms === null ? null : { ip: entry.ip, ms }
+    const probe = await tlsLatency(entry.ip, TLS_TIMEOUT_MS)
+    return probe === null ? null : { ip: entry.ip, ms: probe.ms, bytes: probe.bytes }
   })
+  const tlsBytes = verified.reduce((sum, entry) => sum + (entry === null ? 0 : entry.bytes), 0)
   const alive = verified.filter(Boolean).sort((left, right) => left.ms - right.ms)
   return {
     endpoint: alive[0] ?? null,
     elapsed: Date.now() - started,
-    tcp: latencies.filter((ms) => typeof ms === 'number').length,
+    tcp: latencies.filter((entry) => entry !== null).length,
     tls: alive.length,
+    bytes: tcpBytes + tlsBytes,
     detail: alive.length === 0 ? 'none of the reachable edges completed a TLS handshake with 200' : null,
   }
 }
@@ -245,19 +256,22 @@ export function apply(ctx) {
       state.lastProbeAt = new Date().toISOString()
       const probe = await bestEdge()
       state.lastProbeMs = probe.elapsed
+      state.lastProbeBytes = probe.bytes
+      state.probeBytes += probe.bytes
+      state.probes += 1
       state.runs += 1
       if (probe.endpoint === null) {
         state.lastError = probe.detail
-        log('probe found no usable edge (' + reason + ')')
-        return { ok: false, reason, error: probe.detail }
+        log('probe found no usable edge (' + reason + ', ' + probe.bytes + 'B)')
+        return { ok: false, reason, error: probe.detail, bytes: probe.bytes }
       }
       const write = await askHelper(['pin ' + probe.endpoint.ip])
       if (write.ok) {
         state.lastPin = probe.endpoint.ip
         state.lastError = null
         state.helper = 'ok'
-        log('pinned ' + probe.endpoint.ip + ' (' + probe.endpoint.ms + 'ms, ' + probe.elapsed + 'ms scan, ' + reason + ')')
-        return { ok: true, ip: probe.endpoint.ip, reason }
+        log('pinned ' + probe.endpoint.ip + ' (' + probe.endpoint.ms + 'ms, ' + probe.elapsed + 'ms scan, ' + probe.bytes + 'B, ' + reason + ')')
+        return { ok: true, ip: probe.endpoint.ip, reason, bytes: probe.bytes }
       }
       state.helper = write.error === 'ECONNREFUSED' ? 'down' : state.helper
       state.lastError = write.error
@@ -277,7 +291,7 @@ export function apply(ctx) {
       log('detector missing at ' + exe)
       return
     }
-    detector = spawn(exe, ['detect'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    detector = spawn(exe, ['detect', '--exclude-pid', String(process.pid)], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
     state.detectorPid = detector.pid ?? null
     log('detector started pid=' + state.detectorPid)
     let buffer = ''
@@ -347,6 +361,9 @@ export function apply(ctx) {
             lastEventIp: state.lastEventIp,
             lastProbeAt: state.lastProbeAt,
             lastProbeMs: state.lastProbeMs,
+            lastProbeBytes: state.lastProbeBytes,
+            probeBytes: state.probeBytes,
+            probes: state.probes,
             lastPin: state.lastPin,
             lastError: state.lastError,
             runs: state.runs,

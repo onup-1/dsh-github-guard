@@ -75,7 +75,16 @@ static class GitHubGuardNative
     {
         string mode = args.Length > 0 ? args[0] : "detect";
         if (mode == "serve") { Serve(); return 0; }
-        if (mode == "detect") { Detect(); return 0; }
+        if (mode == "detect")
+        {
+            int excludePid = 0;
+            for (int index = 1; index + 1 < args.Length; index++)
+            {
+                if (args[index] == "--exclude-pid") int.TryParse(args[index + 1], out excludePid);
+            }
+            Detect(excludePid);
+            return 0;
+        }
         if (mode == "pin")
         {
             string applied;
@@ -90,15 +99,16 @@ static class GitHubGuardNative
 
     // ---------------------------------------------------------------- detect
 
-    static void Detect()
+    static void Detect(int excludePid)
     {
         bool created;
         var mutex = new Mutex(true, "Local\\DSHGitHubGuardDetect", out created);
         GC.KeepAlive(mutex);
         if (!created) { Log("detect: another detector is already running"); return; }
 
-        Log("detect: watching for GitHub traffic");
+        Log("detect: watching for GitHub traffic (exclude pid " + excludePid + ")");
         var known = new HashSet<string>(Candidates, StringComparer.Ordinal);
+        var recent = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         DateTime lastTrigger = DateTime.MinValue;
 
         while (true)
@@ -111,13 +121,22 @@ static class GitHubGuardNative
                 if ((DateTime.UtcNow - lastTrigger).TotalSeconds >= 60)
                 {
                     string hit = null;
-                    foreach (string address in RemoteEndpoints())
+                    foreach (Tuple<string, uint> endpoint in RemoteEndpoints())
                     {
-                        if (known.Contains(address)) { hit = address; break; }
+                        if (excludePid > 0 && endpoint.Item2 == (uint)excludePid) continue;
+                        if (!known.Contains(endpoint.Item1)) continue;
+                        DateTime seen;
+                        // The same address must not re-trigger for three minutes: our own probe
+                        // and DSH's API checks both leave connections to these addresses behind.
+                        if (recent.TryGetValue(endpoint.Item1, out seen) &&
+                            (DateTime.UtcNow - seen).TotalSeconds < 180) continue;
+                        hit = endpoint.Item1;
+                        break;
                     }
                     if (hit != null)
                     {
                         lastTrigger = DateTime.UtcNow;
+                        recent[hit] = DateTime.UtcNow;
                         Console.WriteLine("EVENT " + hit + " " + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                         Console.Out.Flush();
                         Log("detect: github traffic from " + hit);
@@ -146,9 +165,9 @@ static class GitHubGuardNative
     [DllImport("iphlpapi.dll", SetLastError = true)]
     static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int pdwSize, bool bOrder, int ulAf, int tableClass, uint reserved);
 
-    static List<string> RemoteEndpoints()
+    static List<Tuple<string, uint>> RemoteEndpoints()
     {
-        var result = new List<string>();
+        var result = new List<Tuple<string, uint>>();
         int size = 0;
         const int TcpTableOwnerPidAll = 5;
         const int AfInet = 2;
@@ -170,7 +189,7 @@ static class GitHubGuardNative
                 // 3 = SYN_SENT, 4 = SYN_RECV, 5 = ESTABLISHED. TIME_WAIT lingers for
                 // minutes and would make the detector chase its own probes.
                 if (row.State != 3 && row.State != 4 && row.State != 5) continue;
-                result.Add(new IPAddress(row.RemoteAddr).ToString());
+                result.Add(Tuple.Create(new IPAddress(row.RemoteAddr).ToString(), row.OwningPid));
             }
             return result;
         }
