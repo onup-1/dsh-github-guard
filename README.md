@@ -26,7 +26,14 @@ child process to Low integrity, and Schannel cannot create client credentials at
 
 ## Install
 
-1. Install the plugin bundle into the DSH profile (from the DSH workspace root):
+1. Install the plugin bundle into the DSH profile (from the DSH workspace root). Either from
+   npm:
+
+   ```
+   plugin_manager install_bundle  target=dsh-github-guard
+   ```
+
+   or from a local checkout (editable install, the profile entry becomes a junction):
 
    ```
    plugin_manager install_bundle  target=<absolute path to this directory>

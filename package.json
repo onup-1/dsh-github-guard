@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "dsh-github-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Keeps github.com reachable from DSH: watches GitHub traffic, probes the rotating edge IPs, and asks a tiny SYSTEM helper to rewrite the hosts pins.",
   "keywords": [
     "dsh",
